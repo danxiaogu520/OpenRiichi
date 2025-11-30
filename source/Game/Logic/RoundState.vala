@@ -583,6 +583,7 @@ public class RoundState : Object
     public bool game_over { get; private set; }
     public GameDrawType game_draw_type { get; private set; }
     public Tile newest_dora { get { return wall.newest_dora; } }
+    public ArrayList<Tile> dora { get { return wall.dora; } }
     public ArrayList<Tile> ura_dora { get { return wall.ura_dora; } }
     public bool tiles_empty { get { return wall.empty; } }
     public ChankanCall chankan_call { get; private set; }

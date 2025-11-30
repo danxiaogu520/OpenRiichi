@@ -27,36 +27,48 @@ public class TileCalculator
     }
 
     /**
-     * 狭义进张结果
+     * 统一的进张结果类
+     * 根据手牌数量，返回不同的信息：
+     * - 13张牌：返回能让向听数前进的牌种类（ukeire_tiles）
+     * - 14张牌：返回推荐打牌顺序（discard_options）
      */
-    public class NarrowUkeireResult
+    public class UkeireResult
     {
-        public int total_types;                    // 进张种类数
-        public int total_tiles;                    // 进张总张数
-        public ArrayList<UkeireInfo> ukeire_list;  // 进张详细列表
+        // 当前向听数
+        public int current_shanten;
+        
+        // 13张牌时使用：能让向听数前进的牌种类列表
+        public ArrayList<UkeireInfo> ukeire_tiles;
+        
+        // 14张牌时使用：推荐打牌选项（已排序）
+        public ArrayList<DiscardOption> discard_options;
 
-        public NarrowUkeireResult()
+        public UkeireResult()
         {
-            total_types = 0;
-            total_tiles = 0;
-            ukeire_list = new ArrayList<UkeireInfo>();
+            current_shanten = 999;
+            ukeire_tiles = new ArrayList<UkeireInfo>();
+            discard_options = new ArrayList<DiscardOption>();
         }
     }
 
     /**
-     * 广义进张结果（包含推荐打牌）
+     * 打牌选项信息
      */
-    public class WideUkeireResult
+    public class DiscardOption
     {
-        public Tile? recommended_discard;          // 推荐打出的牌
-        public int shanten_after_discard;          // 打出后的向听数
-        public NarrowUkeireResult narrow_result;   // 打出后的狭义进张
+        public Tile tile;                      // 要打出的牌
+        public int shanten_after;              // 打出后的向听数
+        public int narrow_ukeire_count;        // 打出后的狭义进张数（张数）
+        public int narrow_ukeire_types;        // 打出后的狭义进张种类数
+        public ArrayList<UkeireInfo> ukeire_details;  // 详细进张信息
 
-        public WideUkeireResult()
+        public DiscardOption(Tile tile)
         {
-            recommended_discard = null;
-            shanten_after_discard = 999;
-            narrow_result = new NarrowUkeireResult();
+            this.tile = tile;
+            this.shanten_after = 999;
+            this.narrow_ukeire_count = 0;
+            this.narrow_ukeire_types = 0;
+            this.ukeire_details = new ArrayList<UkeireInfo>();
         }
     }
 
@@ -519,24 +531,106 @@ public class TileCalculator
     }
 
     /**
-     * 计算狭义进张
+     * 统一的狭义进张计算接口
+     * 
+     * @param hand 手牌
+     * @param calls 副露
+     * @param round_state 游戏状态（可选，用于计算可见牌）
+     * @return UkeireResult
+     * 
+     * 行为：
+     * - 若手牌+副露=13张：返回所有能让向听数前进的牌种类（ukeire_tiles）
+     * - 若手牌+副露=14张：返回手牌的排序副本（discard_options），按打出后向听数排序
      */
-    public NarrowUkeireResult calculate_narrow_ukeire(ArrayList<Tile> hand,
-                                                       ArrayList<RoundStateCall>? calls,
-                                                       RoundState? round_state = null)
+    public UkeireResult calculate_narrow_ukeire(ArrayList<Tile> hand,
+                                                 ArrayList<RoundStateCall>? calls,
+                                                 RoundState? round_state = null)
     {
-        NarrowUkeireResult result = new NarrowUkeireResult();
-
+        UkeireResult result = new UkeireResult();
+        
+        // 计算总牌数
+        int total_tiles = hand.size;
+        if (calls != null)
+            total_tiles += calls.size * 3;  // 每个副露算3张牌
+        
         // 计算当前向听数
-        int current_shanten = calculate_shanten(hand, calls);
-
+        result.current_shanten = calculate_shanten(hand, calls);
+        
         // 如果已经和了，没有进张
-        if (current_shanten == AGARI_STATE)
+        if (result.current_shanten == AGARI_STATE)
             return result;
+        
+        if (total_tiles == 13)
+        {
+            // 13张牌：返回所有能让向听数前进的牌种类
+            result.ukeire_tiles = calculate_13_tiles_narrow_ukeire(hand, calls, round_state, result.current_shanten);
+        }
+        else if (total_tiles == 14)
+        {
+            // 14张牌：返回打牌选项，按向听数排序
+            result.discard_options = calculate_14_tiles_narrow_discard_options(hand, calls, round_state);
+        }
+        
+        return result;
+    }
 
+    /**
+     * 统一的广义进张计算接口
+     * 
+     * @param hand 手牌
+     * @param calls 副露
+     * @param round_state 游戏状态（可选）
+     * @return UkeireResult
+     * 
+     * 行为：
+     * - 若手牌+副露=13张：返回所有能让"向听数前进，或狭义进张数更多"的牌种类（ukeire_tiles）
+     * - 若手牌+副露=14张：返回手牌的排序副本（discard_options），首先按向听数排序，对于向听数相同的，按狭义进张数排序
+     */
+    public UkeireResult calculate_wide_ukeire(ArrayList<Tile> hand,
+                                               ArrayList<RoundStateCall>? calls,
+                                               RoundState? round_state = null)
+    {
+        UkeireResult result = new UkeireResult();
+        
+        // 计算总牌数
+        int total_tiles = hand.size;
+        if (calls != null)
+            total_tiles += calls.size * 3;
+        
+        // 计算当前向听数
+        result.current_shanten = calculate_shanten(hand, calls);
+        
+        // 如果已经和了，没有进张
+        if (result.current_shanten == AGARI_STATE)
+            return result;
+        
+        if (total_tiles == 13)
+        {
+            // 13张牌：返回所有能让向听数前进或狭义进张数更多的牌种类
+            result.ukeire_tiles = calculate_13_tiles_wide_ukeire(hand, calls, round_state, result.current_shanten);
+        }
+        else if (total_tiles == 14)
+        {
+            // 14张牌：返回打牌选项，按向听数和狭义进张数排序
+            result.discard_options = calculate_14_tiles_wide_discard_options(hand, calls, round_state);
+        }
+        
+        return result;
+    }
+
+    /**
+     * 计算13张牌时的狭义进张（能让向听数前进的牌种类）
+     */
+    private ArrayList<UkeireInfo> calculate_13_tiles_narrow_ukeire(ArrayList<Tile> hand,
+                                                                     ArrayList<RoundStateCall>? calls,
+                                                                     RoundState? round_state,
+                                                                     int current_shanten)
+    {
+        ArrayList<UkeireInfo> ukeire_list = new ArrayList<UkeireInfo>();
+        
         // 统计可见牌的数量
         int[] visible_count = count_visible_tiles(hand, calls, round_state);
-
+        
         // 遍历所有34种牌型
         for (int tile_idx = 0; tile_idx < 34; tile_idx++)
         {
@@ -544,24 +638,24 @@ public class TileCalculator
             int remaining = 4 - visible_count[tile_idx];
             if (remaining <= 0)
                 continue;
-
+            
             // 模拟摸到这张牌
             TileType tile_type = index_to_tile_type(tile_idx);
             ArrayList<Tile> test_hand = new ArrayList<Tile>();
             test_hand.add_all(hand);
             test_hand.add(new Tile(-1, tile_type, false));
-
+            
             // 尝试打出任意一张牌，看是否能使向听数减少
             bool is_narrow_ukeire = false;
-
+            
             foreach (Tile discard in test_hand)
             {
                 ArrayList<Tile> after_discard = new ArrayList<Tile>();
                 after_discard.add_all(test_hand);
                 after_discard.remove(discard);
-
+                
                 int new_shanten = calculate_shanten(after_discard, calls);
-
+                
                 // 如果向听数减少，这是狭义进张
                 if (new_shanten < current_shanten)
                 {
@@ -569,41 +663,108 @@ public class TileCalculator
                     break;
                 }
             }
-
+            
             if (is_narrow_ukeire)
             {
-                result.total_types++;
-                result.total_tiles += remaining;
-                result.ukeire_list.add(new UkeireInfo(tile_idx, remaining, current_shanten - 1, 0));
+                ukeire_list.add(new UkeireInfo(tile_idx, remaining, current_shanten - 1, 0));
             }
         }
-
-        return result;
+        
+        return ukeire_list;
     }
 
     /**
-     * 计算广义进张（找出最优打牌选择）
+     * 计算13张牌时的广义进张（能让向听数前进或狭义进张数更多的牌种类）
      */
-    public WideUkeireResult calculate_wide_ukeire(ArrayList<Tile> hand,
-                                                   ArrayList<RoundStateCall>? calls,
-                                                   RoundState? round_state = null)
+    private ArrayList<UkeireInfo> calculate_13_tiles_wide_ukeire(ArrayList<Tile> hand,
+                                                                   ArrayList<RoundStateCall>? calls,
+                                                                   RoundState? round_state,
+                                                                   int current_shanten)
     {
-        WideUkeireResult best_result = new WideUkeireResult();
+        ArrayList<UkeireInfo> ukeire_list = new ArrayList<UkeireInfo>();
+        
+        // 计算当前的狭义进张数
+        ArrayList<UkeireInfo> current_narrow = calculate_13_tiles_narrow_ukeire(hand, calls, round_state, current_shanten);
+        int current_narrow_count = 0;
+        foreach (UkeireInfo info in current_narrow)
+            current_narrow_count += info.remaining_count;
+        
+        // 统计可见牌的数量
+        int[] visible_count = count_visible_tiles(hand, calls, round_state);
+        
+        // 遍历所有34种牌型
+        for (int tile_idx = 0; tile_idx < 34; tile_idx++)
+        {
+            // 计算该牌型还剩多少张可摸
+            int remaining = 4 - visible_count[tile_idx];
+            if (remaining <= 0)
+                continue;
+            
+            // 模拟摸到这张牌
+            TileType tile_type = index_to_tile_type(tile_idx);
+            ArrayList<Tile> test_hand = new ArrayList<Tile>();
+            test_hand.add_all(hand);
+            test_hand.add(new Tile(-1, tile_type, false));
+            
+            // 尝试打出每一张牌，找到最优结果
+            int best_shanten = 999;
+            int best_narrow_count = 0;
+            
+            foreach (Tile discard in test_hand)
+            {
+                ArrayList<Tile> after_discard = new ArrayList<Tile>();
+                after_discard.add_all(test_hand);
+                after_discard.remove(discard);
+                
+                int new_shanten = calculate_shanten(after_discard, calls);
+                
+                // 计算打出后的狭义进张数
+                ArrayList<UkeireInfo> narrow_after = calculate_13_tiles_narrow_ukeire(after_discard, calls, round_state, new_shanten);
+                int narrow_count = 0;
+                foreach (UkeireInfo info in narrow_after)
+                    narrow_count += info.remaining_count;
+                
+                // 更新最优结果
+                if (new_shanten < best_shanten || 
+                    (new_shanten == best_shanten && narrow_count > best_narrow_count))
+                {
+                    best_shanten = new_shanten;
+                    best_narrow_count = narrow_count;
+                }
+            }
+            
+            // 判断是否是广义进张
+            bool is_wide_ukeire = false;
+            if (best_shanten < current_shanten)
+            {
+                // 向听数前进
+                is_wide_ukeire = true;
+            }
+            else if (best_shanten == current_shanten && best_narrow_count > current_narrow_count)
+            {
+                // 向听数不变，但狭义进张数更多
+                is_wide_ukeire = true;
+            }
+            
+            if (is_wide_ukeire)
+            {
+                ukeire_list.add(new UkeireInfo(tile_idx, remaining, best_shanten, best_narrow_count));
+            }
+        }
+        
+        return ukeire_list;
+    }
 
-        // 计算当前向听数和狭义进张
-        int current_shanten = calculate_shanten(hand, calls);
-        NarrowUkeireResult current_narrow = calculate_narrow_ukeire(hand, calls, round_state);
-
-        // 如果已经和了，不需要打牌
-        if (current_shanten == AGARI_STATE)
-            return best_result;
-
-        best_result.shanten_after_discard = current_shanten;
-        best_result.narrow_result = current_narrow;
-
-        // 遍历手牌中的每一张，尝试打出
+    /**
+     * 计算14张牌时的狭义打牌选项（按向听数排序）
+     */
+    private ArrayList<DiscardOption> calculate_14_tiles_narrow_discard_options(ArrayList<Tile> hand,
+                                                                                 ArrayList<RoundStateCall>? calls,
+                                                                                 RoundState? round_state)
+    {
+        ArrayList<DiscardOption> options = new ArrayList<DiscardOption>();
         ArrayList<Tile> tried_types = new ArrayList<Tile>();
-
+        
         foreach (Tile discard_tile in hand)
         {
             // 避免重复计算相同牌型
@@ -618,63 +779,51 @@ public class TileCalculator
             }
             if (already_tried)
                 continue;
-
+            
             tried_types.add(discard_tile);
-
+            
             // 打出这张牌后的手牌
             ArrayList<Tile> after_discard = new ArrayList<Tile>();
             after_discard.add_all(hand);
             after_discard.remove(discard_tile);
-
-            // 计算打出后的向听数
-            int shanten_after = calculate_shanten(after_discard, calls);
-
+            
+            // 创建打牌选项
+            DiscardOption option = new DiscardOption(discard_tile);
+            option.shanten_after = calculate_shanten(after_discard, calls);
+            
             // 计算打出后的狭义进张
-            NarrowUkeireResult narrow_after = calculate_narrow_ukeire(after_discard, calls, round_state);
-
-            // 判断是否是更好的选择
-            bool is_better = false;
-
-            // 优先级1: 向听数减少（这实际上通常不会发生，因为打牌不会减少向听）
-            if (shanten_after < best_result.shanten_after_discard)
+            if (option.shanten_after != AGARI_STATE)
             {
-                is_better = true;
+                option.ukeire_details = calculate_13_tiles_narrow_ukeire(after_discard, calls, round_state, option.shanten_after);
+                
+                foreach (UkeireInfo info in option.ukeire_details)
+                {
+                    option.narrow_ukeire_count += info.remaining_count;
+                    option.narrow_ukeire_types++;
+                }
             }
-            // 优先级2: 向听数相同，但进张数更多（广义进张的定义）
-            else if (shanten_after == best_result.shanten_after_discard &&
-                     narrow_after.total_tiles > best_result.narrow_result.total_tiles)
-            {
-                is_better = true;
-            }
-            // 优先级3: 向听数和进张总数相同，但种类更多
-            else if (shanten_after == best_result.shanten_after_discard &&
-                     narrow_after.total_tiles == best_result.narrow_result.total_tiles &&
-                     narrow_after.total_types > best_result.narrow_result.total_types)
-            {
-                is_better = true;
-            }
-
-            if (is_better)
-            {
-                best_result.recommended_discard = discard_tile;
-                best_result.shanten_after_discard = shanten_after;
-                best_result.narrow_result = narrow_after;
-            }
+            
+            options.add(option);
         }
-
-        return best_result;
+        
+        // 按向听数排序（向听数小的优先）
+        options.sort((a, b) => {
+            return a.shanten_after - b.shanten_after;
+        });
+        
+        return options;
     }
 
     /**
-     * 获取所有打牌选择的广义进张分析
+     * 计算14张牌时的广义打牌选项（按向听数和狭义进张数排序）
      */
-    public ArrayList<WideUkeireResult> analyze_all_discards(ArrayList<Tile> hand,
-                                                             ArrayList<RoundStateCall>? calls,
-                                                             RoundState? round_state = null)
+    private ArrayList<DiscardOption> calculate_14_tiles_wide_discard_options(ArrayList<Tile> hand,
+                                                                               ArrayList<RoundStateCall>? calls,
+                                                                               RoundState? round_state)
     {
-        ArrayList<WideUkeireResult> results = new ArrayList<WideUkeireResult>();
+        ArrayList<DiscardOption> options = new ArrayList<DiscardOption>();
         ArrayList<Tile> tried_types = new ArrayList<Tile>();
-
+        
         foreach (Tile discard_tile in hand)
         {
             // 避免重复计算相同牌型
@@ -689,40 +838,55 @@ public class TileCalculator
             }
             if (already_tried)
                 continue;
-
+            
             tried_types.add(discard_tile);
-
+            
             // 打出这张牌后的手牌
             ArrayList<Tile> after_discard = new ArrayList<Tile>();
             after_discard.add_all(hand);
             after_discard.remove(discard_tile);
-
-            // 创建结果
-            WideUkeireResult result = new WideUkeireResult();
-            result.recommended_discard = discard_tile;
-            result.shanten_after_discard = calculate_shanten(after_discard, calls);
-            result.narrow_result = calculate_narrow_ukeire(after_discard, calls, round_state);
-
-            results.add(result);
+            
+            // 创建打牌选项
+            DiscardOption option = new DiscardOption(discard_tile);
+            option.shanten_after = calculate_shanten(after_discard, calls);
+            
+            // 计算打出后的狭义进张
+            if (option.shanten_after != AGARI_STATE)
+            {
+                option.ukeire_details = calculate_13_tiles_narrow_ukeire(after_discard, calls, round_state, option.shanten_after);
+                
+                foreach (UkeireInfo info in option.ukeire_details)
+                {
+                    option.narrow_ukeire_count += info.remaining_count;
+                    option.narrow_ukeire_types++;
+                }
+            }
+            
+            options.add(option);
         }
-
-        // 按向听数、进张数排序
-        results.sort((a, b) => {
-            if (a.shanten_after_discard != b.shanten_after_discard)
-                return a.shanten_after_discard - b.shanten_after_discard;
-            if (a.narrow_result.total_tiles != b.narrow_result.total_tiles)
-                return b.narrow_result.total_tiles - a.narrow_result.total_tiles;
-            return b.narrow_result.total_types - a.narrow_result.total_types;
+        
+        // 按向听数排序，向听数相同时按狭义进张数排序
+        options.sort((a, b) => {
+            // 首先按向听数排序（向听数小的优先）
+            if (a.shanten_after != b.shanten_after)
+                return a.shanten_after - b.shanten_after;
+            
+            // 向听数相同，按进张总数排序（进张多的优先）
+            if (a.narrow_ukeire_count != b.narrow_ukeire_count)
+                return b.narrow_ukeire_count - a.narrow_ukeire_count;
+            
+            // 进张总数也相同，按进张种类排序（种类多的优先）
+            return b.narrow_ukeire_types - a.narrow_ukeire_types;
         });
-
-        return results;
+        
+        return options;
     }
 
     /**
      * 统计可见牌的数量（包括手牌、副露、弃牌、宝牌指示牌等）
      */
     private int[] count_visible_tiles(ArrayList<Tile> hand,
-                                      ArrayList<RoundStateCall>? calls,
+                                      ArrayList<Tile>? calls,
                                       RoundState? round_state)
     {
         int[] count = new int[34];
