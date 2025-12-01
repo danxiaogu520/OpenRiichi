@@ -3,9 +3,12 @@ using Gee;
 class SimpleBot : Bot
 {
     private Engine.RandomClass rnd = new Engine.RandomClass();
+    private TileCalculator calculator = new TileCalculator();
 
     protected override void do_turn_decision()
     {
+        RoundStatePlayer self = round_state.self;
+
         if (round_state.can_tsumo())
         {
             do_tsumo();
@@ -16,13 +19,18 @@ class SimpleBot : Bot
         }
         else if(round_state.can_riichi())
         {
+            Tile? riichi_tile = get_riichi_discard_tile();
+            Tile tile;
+            if (riichi_tile == null)
+            {
+                ArrayList<Tile> tiles = round_state.get_tenpai_tiles(self);
+                assert(tiles.size > 0);
+                tile = tiles[rnd.int_range(0, tiles.size)];
+            }
+            else
+                tile = riichi_tile;
+
             do_riichi(false);
-
-            ArrayList<Tile> tiles = round_state.get_tenpai_tiles(round_state.self);
-            assert(tiles.size > 0);
-
-            Tile tile = tiles[rnd.int_range(0, tiles.size)];
-
             do_discard(tile);
         }
         else if (round_state.can_late_kan())
@@ -42,8 +50,8 @@ class SimpleBot : Bot
         else
         {
             Tile tile;
-            if (round_state.self.in_riichi)
-                tile = round_state.self.newest_tile;
+            if (self.in_riichi)
+                tile = self.newest_tile;
             else
                 tile = get_discard_tile();
 
@@ -80,6 +88,34 @@ class SimpleBot : Bot
     }
 
     private Tile get_discard_tile()
+    {
+        Tile? tile = get_calculated_discard_tile();
+        if (tile != null)
+            return tile;
+
+        return get_fallback_discard_tile();
+    }
+
+    private Tile? get_calculated_discard_tile()
+    {
+        TileCalculator.UkeireResult result = calculator.calculate_wide_ukeire(round_state.self.hand, round_state.self.calls, round_state);
+        if (result.discard_options.size == 0)
+            return null;
+
+        return result.discard_options[0].tile;
+    }
+
+    private Tile? get_riichi_discard_tile()
+    {
+        TileCalculator.UkeireResult result = calculator.calculate_wide_ukeire(round_state.self.hand, round_state.self.calls, round_state);
+        foreach (TileCalculator.DiscardOption option in result.discard_options)
+            if (option.shanten_after == 0)
+                return option.tile;
+
+        return null;
+    }
+
+    private Tile get_fallback_discard_tile()
     {
         ArrayList<Tile> tiles = round_state.self.get_discard_tiles();
         assert(tiles.size > 0);

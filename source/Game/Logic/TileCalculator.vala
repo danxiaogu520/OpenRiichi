@@ -96,7 +96,7 @@ public class TileCalculator
 
         foreach (Tile tile in hand)
         {
-            int index = TileRules.tile_type_to_34_index(tile.tile_type);
+            int index = tile_type_to_34_index(tile.tile_type);
             if (index >= 0 && index < 34)
                 tiles_34[index]++;
         }
@@ -549,9 +549,7 @@ public class TileCalculator
         UkeireResult result = new UkeireResult();
         
         // 计算总牌数
-        int total_tiles = hand.size;
-        if (calls != null)
-            total_tiles += calls.size * 3;  // 每个副露算3张牌
+        int total_tiles = calculate_total_tiles(hand, calls);
         
         // 计算当前向听数
         result.current_shanten = calculate_shanten(hand, calls);
@@ -593,9 +591,7 @@ public class TileCalculator
         UkeireResult result = new UkeireResult();
         
         // 计算总牌数
-        int total_tiles = hand.size;
-        if (calls != null)
-            total_tiles += calls.size * 3;
+        int total_tiles = calculate_total_tiles(hand, calls);
         
         // 计算当前向听数
         result.current_shanten = calculate_shanten(hand, calls);
@@ -644,29 +640,37 @@ public class TileCalculator
             ArrayList<Tile> test_hand = new ArrayList<Tile>();
             test_hand.add_all(hand);
             test_hand.add(new Tile(-1, tile_type, false));
-            
-            // 尝试打出任意一张牌，看是否能使向听数减少
+
+            int best_shanten = 999;
             bool is_narrow_ukeire = false;
-            
-            foreach (Tile discard in test_hand)
+
+            int shanten_with_draw = calculate_shanten(test_hand, calls);
+            if (shanten_with_draw == AGARI_STATE)
             {
-                ArrayList<Tile> after_discard = new ArrayList<Tile>();
-                after_discard.add_all(test_hand);
-                after_discard.remove(discard);
-                
-                int new_shanten = calculate_shanten(after_discard, calls);
-                
-                // 如果向听数减少，这是狭义进张
-                if (new_shanten < current_shanten)
+                is_narrow_ukeire = true;
+                best_shanten = AGARI_STATE;
+            }
+            else
+            {
+                foreach (Tile discard in test_hand)
                 {
-                    is_narrow_ukeire = true;
-                    break;
+                    ArrayList<Tile> after_discard = new ArrayList<Tile>();
+                    after_discard.add_all(test_hand);
+                    after_discard.remove(discard);
+
+                    int new_shanten = calculate_shanten(after_discard, calls);
+
+                    if (new_shanten < best_shanten)
+                        best_shanten = new_shanten;
+
+                    if (new_shanten < current_shanten)
+                        is_narrow_ukeire = true;
                 }
             }
-            
+
             if (is_narrow_ukeire)
             {
-                ukeire_list.add(new UkeireInfo(tile_idx, remaining, current_shanten - 1, 0));
+                ukeire_list.add(new UkeireInfo(tile_idx, remaining, best_shanten, 0));
             }
         }
         
@@ -886,7 +890,7 @@ public class TileCalculator
      * 统计可见牌的数量（包括手牌、副露、弃牌、宝牌指示牌等）
      */
     private int[] count_visible_tiles(ArrayList<Tile> hand,
-                                      ArrayList<Tile>? calls,
+                                      ArrayList<RoundStateCall>? calls,
                                       RoundState? round_state)
     {
         int[] count = new int[34];
@@ -915,6 +919,17 @@ public class TileCalculator
         }
 
         return count;
+    }
+
+    private int calculate_total_tiles(ArrayList<Tile> hand, ArrayList<RoundStateCall>? calls)
+    {
+        int total = hand.size;
+
+        if (calls != null)
+            foreach (RoundStateCall call in calls)
+                total += call.tiles.size;
+
+        return total;
     }
 
     private void add_tiles(int[] count, ArrayList<Tile> tiles_list)

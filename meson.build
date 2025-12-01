@@ -30,6 +30,7 @@ sources = files(
     'source/Game/Logic/ServerMessage.vala',
     'source/Game/Logic/Tile.vala',
     'source/Game/Logic/TileRules.vala',
+    'source/Game/Logic/TileCalculator.vala',
     'source/Game/Logic/TimeStamp.vala',
     'source/Game/Logic/VersionInfo.vala',
     'source/Game/MusicPlayer.vala',
